@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Samu's Heart</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05080a; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+
+const PHRASES = [
+  "Love you", "Shamanta", "Fulbanu", "22-12-2006", "Midnight", "Kiss",
+  "10-03-2006", "30-11-2023", "Airport", "Meet", "Chittagong", "Mymensingh", "Want You", "Miss You","Samu",
+  "Mirpur", "Dhaka", "College", "Varsity", "Alabuni", "Lop you", "motherfuc*er", "Deep", "Chul",
+  "Nagin", "Sãmurîta", "2023", "2024", "2025", "2026", "kuttarba**a", "Moyna Pakhi", "Moyna Baby"
+];
+const COLORS = ["#ff1744", "#ff3d5a", "#ff5c7a", "#e8113a", "#ff8099", "#d50032"];
+const BG = "#05080a";
+const FONT = '"Segoe UI", "Noto Sans", system-ui, sans-serif';
+const BUILD_TIME = 5;   
+const BPM = 60;         
+const SEED = 11;        
+
+const FADE = 0.8, PAD = 2, CELL = 40;
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+const BGC = rgb(BG), HI = [255, 214, 224];
+
+function seeded(seed) {                       
+  return () => {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+let items = [], t0 = 0;
+
+function layout() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = innerWidth, H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const rnd = seeded(SEED);
+
+  const raw = [];
+  for (let i = 0; i < 360; i++) {
+    const a = 2 * Math.PI * i / 360;
+    raw.push([16 * Math.sin(a) ** 3,
+      -(13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a))]);
+  }
+  const ry = raw.map(p => p[1]);
+  const cy = (Math.min(...ry) + Math.max(...ry)) / 2, hh = Math.max(...ry) - Math.min(...ry);
+  const SC = 0.9 * Math.min(W / 32, H / hh);
+  const poly = raw.map(([x, y]) => [x * SC, (y - cy) * SC]);
+  const XMIN = Math.min(...poly.map(p => p[0])), XMAX = Math.max(...poly.map(p => p[0]));
+  const YMIN = Math.min(...poly.map(p => p[1])), YMAX = Math.max(...poly.map(p => p[1]));
+
+  const cache = new Map();
+  const spans = iy => {                       
+    if (!cache.has(iy)) {
+      const y = iy + 0.5, xs = [];
+      for (let i = 0; i < poly.length; i++) {
+        const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % poly.length];
+        if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) xs.push(x1 + (y - y1) * (x2 - x1) / (y2 - y1));
+      }
+      xs.sort((a, b) => a - b);
+      const r = [];
+      for (let i = 0; i + 1 < xs.length; i += 2) r.push([xs[i], xs[i + 1]]);
+      cache.set(iy, r);
+    }
+    return cache.get(iy);
+  };
+  const fits = (x1, y1, x2, y2) => {          
+    for (let y = y1; ; y += 3) {
+      const row = spans(Math.floor(Math.min(y, y2)));
+      if (!row.some(([a, b]) => a <= x1 && x2 <= b)) return false;
+      if (y >= y2) return true;
+    }
+  };
+
+  const dims = (t, px) => { ctx.font = `bold ${px}px ${FONT}`; return [ctx.measureText(t).width, px * 1.15]; };
+  const grid = new Map(), placed = [], used = Object.fromEntries(PHRASES.map(p => [p, 0]));
+  const cells = (x1, y1, x2, y2) => {
+    const out = [];
+    for (let i = Math.floor(x1 / CELL); i <= Math.floor(x2 / CELL); i++)
+      for (let j = Math.floor(y1 / CELL); j <= Math.floor(y2 / CELL); j++) out.push(i + "," + j);
+    return out;
+  };
+  const box = (t, px, x, y) => { const [w, h] = dims(t, px); return [x - w / 2, y - h / 2, x + w / 2, y + h / 2]; };
+  const free = ([x1, y1, x2, y2]) => fits(x1, y1, x2, y2) &&
+    !cells(x1, y1, x2, y2).some(c => (grid.get(c) || []).some(([a, b, c2, d]) =>
+      x1 - PAD < c2 && x2 + PAD > a && y1 - PAD < d && y2 + PAD > b));
+
+  const sizes = [18, 14, 11, 9, 8].map(v => Math.max(8, Math.round(v * SC / 20)));
+  for (const px of sizes) {
+    const shortest = PHRASES.reduce((m, t) => dims(t, px)[0] < dims(m, px)[0] ? t : m);
+    const step = Math.max(4, Math.floor(px / 2)), spots = [];
+    for (let x = Math.floor(XMIN); x < XMAX; x += step)
+      for (let y = Math.floor(YMIN); y < YMAX; y += step) spots.push([x, y]);
+    for (let i = spots.length - 1; i > 0; i--) {  
+      const j = Math.floor(rnd() * (i + 1)); [spots[i], spots[j]] = [spots[j], spots[i]];
+    }
+    for (const [x, y] of spots) {
+      if (!free(box(shortest, px, x, y))) continue;
+      const order = PHRASES.map(t => [used[t] + rnd(), t]).sort((a, b) => a[0] - b[0]);
+      for (const [, t] of order) {
+        const b = box(t, px, x, y);
+        if (free(b)) {
+          cells(...b).forEach(c => { if (!grid.has(c)) grid.set(c, []); grid.get(c).push(b); });
+          placed.push({ t, px, x, y }); used[t]++;
+          break;
+        }
+      }
+    }
+  }
+
+  for (let i = placed.length - 1; i > 0; i--) {   
+    const j = Math.floor(rnd() * (i + 1)); [placed[i], placed[j]] = [placed[j], placed[i]];
+  }
+  items = placed.map((p, rank) => ({
+    ...p,
+    rgb: rgb(COLORS[Math.floor(rnd() * COLORS.length)]),
+    start: BUILD_TIME * rank / placed.length,
+    ph: rnd() * Math.PI * 2,
+  }));
+  t0 = performance.now();
+}
+
+function beat(t) {                                 
+  const p = (t * BPM / 60) % 1;
+  const lub = Math.exp(-(((p - 0.08) / 0.045) ** 2));
+  const dub = 0.6 * Math.exp(-(((p - 0.30) / 0.055) ** 2));
+  return 1 + 0.05 * (lub + dub);
+}
+
+function frame(now) {
+  const t = (now - t0) / 1000, W = innerWidth, H = innerHeight;
+  const k = t > BUILD_TIME ? beat(t - BUILD_TIME) : 1;
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const it of items) {
+    const f = (t - it.start) / FADE;
+    if (f < 0) continue;
+    const glow = Math.max(0, Math.sin(t * 1.7 + it.ph)) ** 10;
+    const c = mix(BGC, mix(it.rgb, HI, glow * 0.8), Math.min(f, 1));
+    ctx.font = `bold ${it.px}px ${FONT}`;
+    ctx.fillStyle = `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+    ctx.fillText(it.t, W / 2 + it.x * k, H / 2 + it.y * k);
+  }
+  requestAnimationFrame(frame);
+}
+
+let timer;
+addEventListener("resize", () => { clearTimeout(timer); timer = setTimeout(layout, 200); });
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { layout(); requestAnimationFrame(frame); });
+</script>
+</body>
+</html>
